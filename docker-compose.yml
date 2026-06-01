@@ -1,0 +1,161 @@
+services:
+  redis_bus:
+    image: redis:7.2-alpine
+    container_name: redis_bus
+    command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      - broker_net
+      - worker_net
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  central_api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: central_api
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_HOST: redis_bus
+      REDIS_PORT: "6379"
+      LAYOUT_PATH: /app/data/store_layout.xlsx
+      TXN_PATH: /app/data/transactions.csv
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - "./data/Brigade Road - Store layoutc5f5d56.xlsx:/app/data/store_layout.xlsx:ro"
+      - "./data/Brigade_Bangalore_10_April_26 (1)bc6219c.csv:/app/data/transactions.csv:ro"
+    depends_on:
+      redis_bus:
+        condition: service_healthy
+    networks:
+      - public_net
+      - broker_net
+    restart: unless-stopped
+
+  cam1_worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: cam1_worker
+    environment:
+      CAMERA_ID: CAM_1
+      VIDEO_PATH: "/shared_data/CAM 1.mp4"
+      REDIS_HOST: redis_bus
+      REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
+    mem_limit: 2g
+    volumes:
+      - ".:/shared_data:ro"
+    depends_on:
+      redis_bus:
+        condition: service_healthy
+    networks:
+      - worker_net
+      - broker_net
+    restart: unless-stopped
+
+  cam2_worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: cam2_worker
+    environment:
+      CAMERA_ID: CAM_2
+      VIDEO_PATH: "/shared_data/CAM 2.mp4"
+      REDIS_HOST: redis_bus
+      REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
+    mem_limit: 2g
+    volumes:
+      - ".:/shared_data:ro"
+    depends_on:
+      redis_bus:
+        condition: service_healthy
+    networks:
+      - worker_net
+      - broker_net
+    restart: unless-stopped
+
+  cam3_worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: cam3_worker
+    environment:
+      CAMERA_ID: CAM_3
+      VIDEO_PATH: "/shared_data/CAM 3.mp4"
+      REDIS_HOST: redis_bus
+      REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
+    mem_limit: 2g
+    volumes:
+      - ".:/shared_data:ro"
+    depends_on:
+      redis_bus:
+        condition: service_healthy
+    networks:
+      - worker_net
+      - broker_net
+    restart: unless-stopped
+
+  cam4_worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: cam4_worker
+    environment:
+      CAMERA_ID: CAM_4
+      VIDEO_PATH: "/shared_data/CAM 4.mp4"
+      REDIS_HOST: redis_bus
+      REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
+    mem_limit: 2g
+    volumes:
+      - ".:/shared_data:ro"
+    depends_on:
+      redis_bus:
+        condition: service_healthy
+    networks:
+      - worker_net
+      - broker_net
+    restart: unless-stopped
+
+  cam5_worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: cam5_worker
+    environment:
+      CAMERA_ID: CAM_5
+      VIDEO_PATH: "/shared_data/CAM 5.mp4"
+      REDIS_HOST: redis_bus
+      REDIS_PORT: "6379"
+      PYTHONUNBUFFERED: "1"
+    mem_limit: 2g
+    volumes:
+      - ".:/shared_data:ro"
+    depends_on:
+      redis_bus:
+        condition: service_healthy
+    networks:
+      - worker_net
+      - broker_net
+    restart: unless-stopped
+
+networks:
+  public_net:
+    driver: bridge
+  broker_net:
+    driver: bridge
+  worker_net:
+    driver: bridge
+
+volumes:
+  redis_data:
