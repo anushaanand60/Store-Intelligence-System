@@ -1,0 +1,5 @@
+redis==5.0.4
+opencv-python-headless>=4.9.0
+ultralytics>=8.2.0
+pandas>=2.2.0
+numpy>=1.26.0
