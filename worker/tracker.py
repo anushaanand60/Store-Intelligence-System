@@ -13,6 +13,49 @@ class SpatialHashTracker:
         self.tracks = {}
         self.next_track_id = 1
         self.max_stale = 30
+
+    def update_and_match(self, detections):
+        bucket = defaultdict(list)
+        for tid, st in self.tracks.items():
+            bucket[self._cell(st["bbox"])].append(tid)
+
+        matched_ids = set()
+        output = []
+        for det in detections:
+            bbox = det["bbox"]
+            cell = self._cell(bbox)
+            candidates = []
+            r, c = cell
+            for rr in range(max(0, r - 1), min(self.grid_rows, r + 2)):
+                for cc in range(max(0, c - 1), min(self.grid_cols, c + 2)):
+                    candidates.extend(bucket.get((rr, cc), []))
+            best_tid = None
+            best_iou = self.iou_threshold
+            for tid in candidates:
+                if tid in matched_ids:
+                    continue
+                iou = self._iou(bbox, self.tracks[tid]["bbox"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_tid = tid
+            if best_tid is None:
+                tid = self.next_track_id
+                self.next_track_id += 1
+                self.tracks[tid] = {"bbox": bbox, "stale": 0}
+                output.append({"track_id": tid, "bbox": bbox, "hash": f"{cell[0]}_{cell[1]}"})
+            else:
+                self.tracks[best_tid]["bbox"] = bbox
+                self.tracks[best_tid]["stale"] = 0
+                matched_ids.add(best_tid)
+                output.append({"track_id": best_tid, "bbox": bbox, "hash": f"{cell[0]}_{cell[1]}"})
+
+        for tid in list(self.tracks.keys()):
+            if tid not in matched_ids and not any(o["track_id"] == tid for o in output):
+                self.tracks[tid]["stale"] += 1
+                if self.tracks[tid]["stale"] > self.max_stale:
+                    del self.tracks[tid]
+
+        return output
     
     def get_active_count(self):
         return len(self.tracks)
