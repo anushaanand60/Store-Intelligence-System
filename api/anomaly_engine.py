@@ -16,7 +16,7 @@ class StoreIntelligenceAnomalyDetector:
         baseline = list(self.window)[:-1]
         mean = sum(baseline) / len(baseline)
         var = sum((x - mean) ** 2 for x in baseline) / len(baseline)
-        std = var ** 0.5
+        std = (var ** 0.5)+ 1e-6
         z_score = abs(float(current_entries) - mean) / std
         if z_score > self.z_threshold:
             event = {
