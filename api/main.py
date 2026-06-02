@@ -6,6 +6,8 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 import pandas as pd
+import asyncio
+import redis.asyncio as aioredis
 
 from anomaly_engine import StoreIntelligenceAnomalyDetector
 from behavior_engine import StoreIntelligenceBehaviorEngine
@@ -26,6 +28,26 @@ class InMemoryRedis:
 
     async def get(self, k):
         return self.kv.get(k)
+
+    async def xadd(self, stream, payload, maxlen=1000):
+        self.streams.setdefault(stream, [])
+        self.streams[stream].append((str(time.time()), payload))
+        if len(self.streams[stream]) > maxlen:
+            self.streams[stream] = self.streams[stream][-maxlen:]
+
+    async def xread(self, streams, block=1000, count=10):
+        result = []
+        for stream in streams:
+            items = self.streams.get(stream, [])[:count]
+            if items:
+                result.append((stream, items))
+                self.streams[stream] = self.streams[stream][count:]
+        if not result:
+            await asyncio.sleep(block / 1000.0)
+        return result
+
+    async def aclose(self):
+        return None
 
 def load_zone_map(layout_path):
     zone_map = {
@@ -88,17 +110,85 @@ def load_transactions(csv_candidates):
             continue
     return {}
 
+async def behavior_worker(app):
+    redis_client = app.state.redis
+    engine = app.state.behavior_engine
+    stream_keys = {f"camera_stream:CAM_{i}": "$" for i in range(1, 6)}
+    while True:
+        try:
+            events = await redis_client.xread(stream_keys, block=1000, count=128)
+            for stream, messages in events:
+                camera_id = stream.split(":")[-1]
+                active = []
+                for _, payload in messages:
+                    tracks = json.loads(payload.get("tracks", "[]"))
+                    ts = float(payload.get("timestamp", time.time()))
+                    for t in tracks:
+                        tid = int(t["track_id"])
+                        active.append(tid)
+                        engine.process_track_frame(camera_id, tid, t["bbox"], ts)
+                engine.handle_dropped_tracks(active, camera_id)
+                snap = engine.get_metrics_snapshot()
+                for k, v in snap.items():
+                    await redis_client.set(f"store:{k}", v)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.info(json.dumps({"event": "behavior_worker_error", "error": str(exc)}))
+            await asyncio.sleep(1.0)
+
+async def anomaly_worker(app):
+    redis_client = app.state.redis
+    detector = app.state.anomaly_detector
+    while True:
+        try:
+            entries = int(await redis_client.get("store:total_entries") or 0)
+            detector.check_stream_velocity(entries)
+            occupancy = int(await redis_client.get("store:live_occupancy") or 0)
+            if occupancy < 0:
+                await redis_client.set("store:live_occupancy", 0)
+                logger.warning(json.dumps({"event": "occupancy_underflow_corrected", "value": occupancy}))
+            await asyncio.sleep(2.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.info(json.dumps({"event": "anomaly_worker_error", "error": str(exc)}))
+            await asyncio.sleep(1.0)
+
 @asynccontextmanager
 async def lifespan(app):
-    redis_client = InMemoryRedis()
+    use_test_backend = os.getenv("INTEGRATION_TESTING", "false").lower() == "true"
+    if use_test_backend:
+        redis_client = InMemoryRedis()
+    else:
+        redis_client = aioredis.Redis(
+            host=os.getenv("REDIS_HOST", "redis_bus"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            decode_responses=True,
+        )
+        await redis_client.ping()
     app.state.redis = redis_client
     app.state.zone_map = load_zone_map(os.getenv("LAYOUT_PATH", "/app/data/store_layout.xlsx"))
     app.state.transactions_by_hour = load_transactions([
-        "/app/data/Brigade_Bangalore_10_April_26 (1)bc6219c.csv"
+            os.getenv("TXN_PATH", "/app/data/transactions.csv"),
+            "/app/data/Brigade_Bangalore_10_April_26 (1)bc6219c.csv",
     ])
     app.state.behavior_engine = StoreIntelligenceBehaviorEngine(app.state.zone_map)
     app.state.anomaly_detector = StoreIntelligenceAnomalyDetector()
+    await redis_client.set("store:live_occupancy", 0)
+    await redis_client.set("store:total_entries", 0)
+    await redis_client.set("store:total_exits", 0)
+    await redis_client.set("store:hourly_staff_counts", 0)
+
+    app.state.tasks = [
+        asyncio.create_task(behavior_worker(app)),
+        asyncio.create_task(anomaly_worker(app)),
+    ]
     yield
+    for t in app.state.tasks:
+        t.cancel()
+    await asyncio.gather(*app.state.tasks, return_exceptions=True)
+    await redis_client.aclose()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -116,12 +206,25 @@ async def health():
 @app.get("/metrics")
 async def metrics():
     now_hour = datetime.now().hour
+    r = app.state.redis
+    live = int(await r.get("store:live_occupancy") or 0)
+    entries = int(await r.get("store:total_entries") or 0)
+    exits = int(await r.get("store:total_exits") or 0)
+    staff = int(await r.get("store:hourly_staff_counts") or len(app.state.behavior_engine.staff_registry))
     invoices = int(app.state.transactions_by_hour.get(now_hour, 0))
+    denom = max(entries, 1)
+    conversion = round((invoices / denom) * 100.0, 2)
     return {
-        "live_occupancy": 0,
-        "total_entries": 0,
-        "total_exits": 0,
-        "hourly_staff_counts": len(app.state.behavior_engine.staff_registry),
-        "store_conversion_rate_percentage": 0.0,
-        "mock_hour_invoices_loaded": invoices
+        "live_occupancy": max(live, 0),
+        "total_entries": entries,
+        "total_exits": exits,
+        "hourly_staff_counts": staff,
+        "store_conversion_rate_percentage": conversion
     }
+
+@app.get("/funnel")
+async def funnel():
+    payload = app.state.behavior_engine.get_funnel_snapshot()
+    if not payload:
+        raise HTTPException(status_code=500, detail="funnel_state_unavailable")
+    return payload
