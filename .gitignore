@@ -1,0 +1,16 @@
+# Video Stream Payload Binaries
+*.mp4
+*.avi
+*.mkv
+
+# Spreadsheet Datasets
+*.csv
+*.xlsx
+*.xls
+data/
+
+# Python Caches and Local Test Outputs
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
