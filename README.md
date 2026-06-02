@@ -36,11 +36,19 @@ The system topology is split across isolated service layers:
 
 The repository includes visual assets for validating system behavior and state transitions:
 
-* Runtime Topology Diagram
+### System Blueprints
+* **Runtime Topology Diagram**
 ![Runtime Topology](docs/runtime_topology.png)
-* Zone Resolution Flow Diagram
+* **Zone Resolution Flow Diagram**
 ![Zone Resolution Flow](docs/zone_resolution_flow.png)
 
+### Verification Assets
+* **Live Ingestion Dashboard View**
+![Live Ingestion Dashboard](docs/live_dashboard_screenshot.png)
+
+* **Natively Parsed REST API Response Contracts (`/funnel`)**
+  ![API JSON Response Contract](docs/api_response_screenshot.png)
+  
 ## Data Layout & Evaluation Configuration
 
 To keep repository size manageable, raw camera video assets (`.mp4`) are excluded from version control and mounted locally at runtime through read-only container volumes.
