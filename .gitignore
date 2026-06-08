@@ -14,3 +14,13 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .cache/
+
+# Local Databases
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.db-journal
+
+# Keep data assets out of accidental staging
+data/
